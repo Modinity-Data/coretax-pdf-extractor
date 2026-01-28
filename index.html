@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Coretax PDF Extractor</title>
+    <title>Coretax PDF Extractor (Batch Pro)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
     <link rel="stylesheet" href="https://pyscript.net/releases/2023.05.1/pyscript.css" />
     <script defer src="https://pyscript.net/releases/2023.05.1/pyscript.js"></script>
     
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 
     <style>
         py-terminal { display: none; }
@@ -26,7 +26,7 @@
     <div class="max-w-4xl mx-auto mt-10 p-6">
         <div class="text-center mb-8">
             <h1 class="text-3xl font-extrabold text-slate-900">Coretax PDF Extractor</h1>
-            <p class="text-sm text-slate-500 mt-2">Developed by Data Team, if you have any question please ping Data Team at Google Chat</p>
+            <p class="text-sm text-slate-500 mt-2">Developed by Data Team | High Volume Batch Processing Enabled</p>
         </div>
 
         <div class="bg-white rounded-xl shadow-lg border border-slate-200 p-8">
@@ -46,13 +46,14 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                         </svg>
                     </div>
-                    <h3 class="text-lg font-bold text-slate-700">Upload PDF Files</h3>
+                    <h3 class="text-lg font-bold text-slate-700">Upload PDF Files (Unlimited)</h3>
+                    <p class="text-xs text-slate-500 mt-1">Files will be processed in batches of 50 to prevent crash.</p>
                     <input type="file" id="fileInput" multiple accept="application/pdf" class="hidden">
                 </div>
 
                 <div id="log-container" class="mt-6 hidden">
                     <div class="flex justify-between text-xs font-semibold text-slate-600 mb-1">
-                        <span>Processing Status</span>
+                        <span id="status-label">Processing...</span>
                         <span id="progress-percent">0%</span>
                     </div>
                     <div class="w-full bg-slate-200 rounded-full h-2 mb-4">
@@ -65,6 +66,9 @@
                      <button onclick="window.trigger_download()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-8 rounded-lg shadow-md transition-transform transform hover:-translate-y-1">
                         Download Excel Report
                     </button>
+                    <div class="mt-4 p-4 bg-yellow-50 text-yellow-800 text-xs rounded border border-yellow-200 text-left">
+                        <strong>Troubleshooting:</strong> If download fails, check if your browser blocked the popup or try processing fewer files at once.
+                    </div>
                 </div>
             </div>
         </div>
@@ -240,24 +244,26 @@ def clear_buffer():
 window.process_pdf_content = process_pdf_content
 window.generate_excel = generate_excel
 window.clear_buffer = clear_buffer
-window.mark_ready()
+window.mark_ready = mark_ready
     </py-script>
 
     <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+        // Updated CDN Worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
         const initState = document.getElementById('init-state');
         const readyState = document.getElementById('ready-state');
         const logBox = document.getElementById('console-output');
         const progressBar = document.getElementById('progress-bar');
         const percentText = document.getElementById('progress-percent');
+        const statusLabel = document.getElementById('status-label');
         const downloadContainer = document.getElementById('download-container');
         let excelBase64 = null;
 
-        window.mark_ready = function() {
+        function mark_ready() {
             initState.classList.add('hidden');
             readyState.classList.remove('hidden');
-        };
+        }
 
         function log(msg, error=false) {
             const el = document.createElement('div');
@@ -268,34 +274,45 @@ window.mark_ready()
         }
 
         async function extractSmartText(file) {
-            const arrayBuffer = await file.arrayBuffer();
-            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-            const page = await pdf.getPage(1);
-            const textContent = await page.getTextContent();
-            
-            // SMART SORTING COORDINATES
-            const items = textContent.items.map(item => ({
-                text: item.str,
-                x: item.transform[4],
-                y: item.transform[5]
-            }));
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+                const pdf = await loadingTask.promise;
+                const page = await pdf.getPage(1);
+                const textContent = await page.getTextContent();
+                
+                // Memory Cleanup: Clean up page resources immediately
+                page.cleanup();
 
-            // Sort Y descending (Top->Bottom), then X ascending (Left->Right)
-            items.sort((a, b) => {
-                const yDiff = Math.abs(a.y - b.y);
-                if (yDiff < 5) return a.x - b.x;
-                return b.y - a.y;
-            });
+                const items = textContent.items.map(item => ({
+                    text: item.str,
+                    x: item.transform[4],
+                    y: item.transform[5]
+                }));
 
-            let fullText = "";
-            let lastY = -999;
-            items.forEach(item => {
-                if (lastY !== -999 && Math.abs(item.y - lastY) > 5) fullText += "\n";
-                else if (lastY !== -999) fullText += " ";
-                fullText += item.text;
-                lastY = item.y;
-            });
-            return fullText;
+                items.sort((a, b) => {
+                    const yDiff = Math.abs(a.y - b.y);
+                    if (yDiff < 5) return a.x - b.x;
+                    return b.y - a.y;
+                });
+
+                let fullText = "";
+                let lastY = -999;
+                items.forEach(item => {
+                    if (lastY !== -999 && Math.abs(item.y - lastY) > 5) fullText += "\n";
+                    else if (lastY !== -999) fullText += " ";
+                    fullText += item.text;
+                    lastY = item.y;
+                });
+
+                // Crucial: Destroy the document to free memory
+                await pdf.destroy();
+                
+                return fullText;
+            } catch (err) {
+                console.error("Extraction error:", err);
+                throw err;
+            }
         }
 
         function getFilename() {
@@ -304,33 +321,54 @@ window.mark_ready()
             return `Tax_Recap_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.xlsx`;
         }
 
+        // BATCHING UTILITY
+        const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
         document.getElementById('fileInput').addEventListener('change', async function() {
-            const files = this.files;
+            const files = Array.from(this.files);
             if (!files.length) return;
 
+            // Reset UI
             logBox.innerHTML = "";
             window.clear_buffer();
             downloadContainer.classList.add('hidden');
             document.getElementById('log-container').classList.remove('hidden');
+            
+            const BATCH_SIZE = 50; // Process 50 files, then rest
+            const total = files.length;
+            let processed = 0;
 
-            for(let i=0; i<files.length; i++) {
-                const file = files[i];
-                const pct = Math.round(((i)/files.length)*100);
-                progressBar.style.width = pct + "%";
-                percentText.innerText = pct + "%";
+            for (let i = 0; i < total; i += BATCH_SIZE) {
+                const batch = files.slice(i, i + BATCH_SIZE);
+                statusLabel.innerText = `Processing batch ${Math.floor(i/BATCH_SIZE) + 1} (Files ${i+1}-${Math.min(i+BATCH_SIZE, total)})...`;
+                
+                // Process Batch
+                for (const file of batch) {
+                    try {
+                        const text = await extractSmartText(file);
+                        const msg = window.process_pdf_content(text, file.name, processed + 1);
+                        log(msg);
+                    } catch(e) {
+                        log(`Error ${file.name}: ${e.message}`, true);
+                    }
+                    processed++;
+                    const pct = Math.round((processed / total) * 100);
+                    progressBar.style.width = pct + "%";
+                    percentText.innerText = pct + "%";
+                }
 
-                try {
-                    const text = await extractSmartText(file);
-                    const msg = window.process_pdf_content(text, file.name, i+1);
-                    log(msg);
-                } catch(e) {
-                    log(`Error ${file.name}: ${e.message}`, true);
+                // RESTING PERIOD (Garbage Collection window)
+                if (processed < total) {
+                    statusLabel.innerText = "Resting browser memory (1s)...";
+                    await wait(1000); // 1 second pause to let browser GC run
                 }
             }
 
+            statusLabel.innerText = "Finalizing Excel...";
             progressBar.style.width = "100%";
             percentText.innerText = "100%";
             
+            // Generate Excel
             const b64 = window.generate_excel();
             if (b64) {
                 excelBase64 = b64;
