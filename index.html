@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Coretax PDF Extractor (Batch Pro)</title>
+    <title>Coretax PDF Extractor (V7 - Status Fixed)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -26,7 +26,7 @@
     <div class="max-w-4xl mx-auto mt-10 p-6">
         <div class="text-center mb-8">
             <h1 class="text-3xl font-extrabold text-slate-900">Coretax PDF Extractor</h1>
-            <p class="text-sm text-slate-500 mt-2">Developed by Data Team | High Volume Batch Processing Enabled</p>
+            <p class="text-sm text-slate-500 mt-2">Developed by Data Team | V7: Fix Logic Status Pembetulan</p>
         </div>
 
         <div class="bg-white rounded-xl shadow-lg border border-slate-200 p-8">
@@ -47,7 +47,7 @@
                         </svg>
                     </div>
                     <h3 class="text-lg font-bold text-slate-700">Upload PDF Files (Unlimited)</h3>
-                    <p class="text-xs text-slate-500 mt-1">Files will be processed in batches of 50 to prevent crash.</p>
+                    <p class="text-xs text-slate-500 mt-1">Batch processing enabled (50 files/cycle).</p>
                     <input type="file" id="fileInput" multiple accept="application/pdf" class="hidden">
                 </div>
 
@@ -67,7 +67,7 @@
                         Download Excel Report
                     </button>
                     <div class="mt-4 p-4 bg-yellow-50 text-yellow-800 text-xs rounded border border-yellow-200 text-left">
-                        <strong>Troubleshooting:</strong> If download fails, check if your browser blocked the popup or try processing fewer files at once.
+                        <strong>Tips:</strong> Jika download tidak muncul, cek "Pop-up Blocker" di browser Anda.
                     </div>
                 </div>
             </div>
@@ -119,15 +119,28 @@ def format_masa(text):
 
 def process_pdf_content(text, filename, index):
     try:
-        # 1. NOMOR
-        header_text = text[:800]
+        # 1. HEADER ANALYSIS (Nomor, Masa, Status)
+        header_text = text[:1200]
+        
+        # Nomor
         nomor_match = re.search(r"\b(2[4-6][0-9A-Z]{7,15})\b", header_text)
         nomor = nomor_match.group(1) if nomor_match else ""
 
-        # 2. MASA
+        # Masa Pajak
         masa_pajak = format_masa(header_text)
 
-        # 3. KODE OBJEK & FINANCIALS
+        # --- UPDATE V7: DETEKSI STATUS ---
+        status_bupot = "NORMAL" # Default
+        if re.search(r"\bPEMBETULAN\b", header_text, re.IGNORECASE):
+            # Coba cari spesifik "PEMBETULAN KE-X"
+            rev_match = re.search(r"(PEMBETULAN\s+KE\s*-\s*\d+)", header_text, re.IGNORECASE)
+            if rev_match:
+                status_bupot = rev_match.group(1).upper()
+            else:
+                status_bupot = "PEMBETULAN"
+        # --------------------------------
+
+        # 2. FINANCIALS
         code_match = re.search(r"(\d{2}-\d{3}-\d{2})", text)
         kode_objek = code_match.group(1) if code_match else ""
         
@@ -137,6 +150,7 @@ def process_pdf_content(text, filename, index):
         pph = 0
         
         if kode_objek:
+            # Objek Name
             lines = text.split('\n')
             for line in lines:
                 if kode_objek in line:
@@ -146,35 +160,30 @@ def process_pdf_content(text, filename, index):
                         objek_pajak = valid_texts[0]
                     break
             
+            # Numbers
             code_idx = text.find(kode_objek)
-            scan_window = text[code_idx:code_idx+400]
+            scan_window = text[code_idx:code_idx+500]
             scan_window_clean = scan_window.replace(kode_objek, " ")
             
             raw_nums = re.findall(r"((?:\d{1,3}(?:\.\d{3})*)+(?:,\d+)?)", scan_window_clean)
-            
             valid_floats = []
             for rs in raw_nums:
                 clean = rs.replace('.', '').replace(',', '.')
                 try:
                     val = float(clean)
-                    if val != 24 and val != 100: 
-                        valid_floats.append(val)
+                    if val != 24 and val != 100: valid_floats.append(val)
                 except: pass
             
             if len(valid_floats) >= 3:
                 rates = [x for x in valid_floats if 0 < x <= 100]
                 tarif = rates[0] if rates else 0
-                
-                if tarif in valid_floats:
-                    valid_floats.remove(tarif)
-                
+                if tarif in valid_floats: valid_floats.remove(tarif)
                 if len(valid_floats) >= 2:
                     dpp = max(valid_floats)
                     valid_floats.remove(dpp)
-                    if valid_floats:
-                        pph = max(valid_floats)
+                    if valid_floats: pph = max(valid_floats)
         
-        # 4. IDENTITY
+        # 3. IDENTITY
         npwp_match = re.search(r"C\.1.*?(\d{15,16})", text, re.DOTALL)
         npwp = npwp_match.group(1) if npwp_match else ""
 
@@ -199,7 +208,7 @@ def process_pdf_content(text, filename, index):
             "NOMOR": nomor,
             "MASA PAJAK": masa_pajak,
             "SIFAT PEMOTONGAN DAN/ATAU PEMUNGUTAN PPh": "TIDAK FINAL",
-            "STATUS BUKTI PEMOTONGAN / PEMUNGUTAN": "NORMAL",
+            "STATUS BUKTI PEMOTONGAN / PEMUNGUTAN": status_bupot, 
             "KODE OBJEK PAJAK": kode_objek,
             "OBJEK PAJAK": objek_pajak,
             "DPP": dpp,
@@ -213,7 +222,7 @@ def process_pdf_content(text, filename, index):
             "NAMA PENANDATANGAN": ttd
         })
 
-        return f"Processed: {filename} -> Rate: {tarif}%"
+        return f"Processed: {filename} -> Status: {status_bupot}"
 
     except Exception as e:
         return f"Error {filename}: {str(e)}"
@@ -235,11 +244,10 @@ def generate_excel():
 def clear_buffer():
     extracted_data.clear()
 
-# --- BAGIAN YG DIPERBAIKI ---
 window.process_pdf_content = process_pdf_content
 window.generate_excel = generate_excel
 window.clear_buffer = clear_buffer
-window.mark_ready()  # Panggil fungsi JS secara langsung, JANGAN pakai tanda sama dengan (=)
+window.mark_ready()
     </py-script>
 
     <script>
@@ -274,13 +282,10 @@ window.mark_ready()  # Panggil fungsi JS secara langsung, JANGAN pakai tanda sam
                 const pdf = await loadingTask.promise;
                 const page = await pdf.getPage(1);
                 const textContent = await page.getTextContent();
-                
                 page.cleanup();
 
                 const items = textContent.items.map(item => ({
-                    text: item.str,
-                    x: item.transform[4],
-                    y: item.transform[5]
+                    text: item.str, x: item.transform[4], y: item.transform[5]
                 }));
 
                 items.sort((a, b) => {
@@ -299,7 +304,6 @@ window.mark_ready()  # Panggil fungsi JS secara langsung, JANGAN pakai tanda sam
                 });
 
                 await pdf.destroy();
-                
                 return fullText;
             } catch (err) {
                 console.error("Extraction error:", err);
