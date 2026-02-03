@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Coretax PDF Extractor (V9.1 - Stable)</title>
+    <title>Coretax PDF Extractor (V10 - Multi-line Fix)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -35,7 +35,7 @@
     <div class="max-w-4xl mx-auto mt-10 p-6">
         <div class="text-center mb-8">
             <h1 class="text-3xl font-extrabold text-slate-900">Coretax PDF Extractor</h1>
-            <p class="text-sm text-slate-500 mt-2">Developed by Data Team | V9.1: Fix DPP Accuracy & Error Handler</p>
+            <p class="text-sm text-slate-500 mt-2">Developed by Data Team | V10: Fix Multi-line Document Numbers</p>
         </div>
 
         <div class="bg-white rounded-xl shadow-lg border border-slate-200 p-8">
@@ -56,7 +56,7 @@
                         </svg>
                     </div>
                     <h3 class="text-lg font-bold text-slate-700">Upload PDF Files</h3>
-                    <p class="text-xs text-slate-500 mt-1">Batch processing enabled (50 files/cycle).</p>
+                    <p class="text-xs text-slate-500 mt-1">Batch processing enabled. Max accuracy mode.</p>
                     <input type="file" id="fileInput" multiple accept="application/pdf" class="hidden">
                 </div>
 
@@ -146,7 +146,6 @@ def process_pdf_content(text, filename, index):
         pph = 0
         
         if kode_objek:
-            # A. Find Object Name
             lines = text.split('\n')
             for line in lines:
                 if kode_objek in line:
@@ -156,10 +155,8 @@ def process_pdf_content(text, filename, index):
                         objek_pajak = valid_texts[0]
                     break
             
-            # B. Define Strict Search Area
             code_idx = text.find(kode_objek)
             
-            # Boundary check
             limit_idx_1 = text.find("C. IDENTITAS", code_idx)
             limit_idx_2 = text.find("Dokumen Dasar", code_idx)
             
@@ -170,13 +167,11 @@ def process_pdf_content(text, filename, index):
             end_idx = min(code_idx + 400, limit_idx)
             scan_window = text[code_idx:end_idx]
             
-            # C. Extract Numbers
             scan_window_clean = scan_window.replace(kode_objek, " ")
             raw_nums = re.findall(r"((?:\d{1,3}(?:\.\d{3})*)+(?:,\d+)?)", scan_window_clean)
             
             valid_floats = []
             for rs in raw_nums:
-                # SKIP potential IDs
                 if len(rs.replace('.','').replace(',','')) > 14 and '.' not in rs:
                     continue
                 clean = rs.replace('.', '').replace(',', '.')
@@ -186,7 +181,6 @@ def process_pdf_content(text, filename, index):
                         valid_floats.append(val)
                 except: pass
             
-            # D. Heuristic Assignment
             if len(valid_floats) >= 3:
                 rates = [x for x in valid_floats if 0 < x <= 100]
                 tarif = rates[0] if rates else 0
@@ -213,8 +207,34 @@ def process_pdf_content(text, filename, index):
         ttd_match = re.search(r"C\.5.*?:\s*([^\n]+)", text)
         ttd = ttd_match.group(1).strip() if ttd_match else ""
 
-        doc_match = re.search(r"Nomor Dokumen\s*[:\s]+([^\n]+)", text, re.IGNORECASE)
-        no_dokumen = doc_match.group(1).strip() if doc_match else ""
+        # --- FIX V10: NOMOR DOKUMEN MULTI-LINE ---
+        # Strategi: Ambil teks antara "Nomor Dokumen" dan batas bawah ("B.10" atau "C. IDENTITAS")
+        no_dokumen = ""
+        idx_doc = text.find("Nomor Dokumen")
+        
+        if idx_doc != -1:
+            # Tentukan batas akhir (Next Section)
+            possible_ends = ["B.10", "Untuk Instansi", "C. IDENTITAS", "C.1"]
+            end_idx = len(text)
+            
+            # Cari marker terdekat setelah Nomor Dokumen
+            for marker in possible_ends:
+                idx = text.find(marker, idx_doc)
+                if idx != -1 and idx < end_idx:
+                    end_idx = idx
+            
+            # Ambil potongan teks
+            raw_doc = text[idx_doc:end_idx]
+            
+            # Bersihkan label "Nomor Dokumen" dan titik dua di awal
+            clean_doc = re.sub(r"^Nomor Dokumen\s*[:\s]*", "", raw_doc, flags=re.IGNORECASE)
+            
+            # Ganti semua newline dengan spasi agar jadi 1 baris
+            no_dokumen = clean_doc.replace("\n", " ").strip()
+            
+            # Hapus spasi ganda
+            no_dokumen = re.sub(r"\s+", " ", no_dokumen)
+        # ----------------------------------------
 
         extracted_data.append({
             "NO": index,
@@ -264,17 +284,18 @@ def generate_excel():
         worksheet.set_column(7, 7, 20, num_fmt) 
         worksheet.set_column(9, 9, 20, num_fmt)
         worksheet.set_column(11, 12, 25, text_fmt)
+        # Lebarkan kolom nomor dokumen
+        worksheet.set_column(10, 10, 50, text_fmt)
 
     return base64.b64encode(buffer.getvalue()).decode()
 
 def clear_buffer():
     extracted_data.clear()
 
-# --- FIX: CALL JS FUNCTION CORRECTLY ---
 window.process_pdf_content = process_pdf_content
 window.generate_excel = generate_excel
 window.clear_buffer = clear_buffer
-window.mark_ready() 
+window.mark_ready()
     </py-script>
 
     <script>
